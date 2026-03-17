@@ -32,20 +32,26 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СКРИНШОТА ---
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
-    UINT num = 0, size = 0;
+    UINT num = 0;          // число кодеков
+    UINT size = 0;         // размер массива кодеков в байтах
+
     GetImageEncodersSize(&num, &size);
     if (size == 0) return -1;
-    ImageCodecInfo* pImageCodecInfo = (ImageCodecInfo*)(malloc(size));
-    if (pImageCodecInfo == NULL) return -1;
-    GetImageEncoders(num, size, pImageCodecInfo);
+
+    // Выделяем память через std::vector или байтовый массив, 
+    // чтобы избежать проблем с чтением недопустимых данных
+    std::vector<BYTE> buffer(size);
+    ImageCodecInfo* pImageCodecInfo = reinterpret_cast<ImageCodecInfo*>(buffer.data());
+
+    if (GetImageEncoders(num, size, pImageCodecInfo) != Ok) return -1;
+
     for (UINT j = 0; j < num; ++j) {
         if (wcscmp(pImageCodecInfo[j].MimeType, format) == 0) {
             *pClsid = pImageCodecInfo[j].Clsid;
-            free(pImageCodecInfo);
             return j;
         }
     }
-    free(pImageCodecInfo);
+
     return -1;
 }
 
