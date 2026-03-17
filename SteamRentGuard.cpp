@@ -14,8 +14,8 @@
 #pragma comment(lib, "Psapi.lib")
 
 // --- НАСТРОЙКИ TELEGRAM ---
-std::wstring botToken = L"8706100595:AAGyn5FfVysIOE7dQueOF_tBSPMm4Bb5ZVU";
-std::wstring chatId = L"5261385589";
+std::wstring botToken = L"YOUR_BOT_TOKEN_HERE";
+std::wstring chatId = L"Your id in tg";
 
 // Сайты для блокировки в HOSTS
 std::vector<std::string> blockedSites = {
