@@ -6,8 +6,8 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
-API_TOKEN = '8706100595:AAGyn5FfVysIOE7dQueOF_tBSPMm4Bb5ZVU'
-ADMIN_ID = 5261385589 
+API_TOKEN = 'YOUR API TOKEN BOT' #Вставться сюда токен бота в телеграме
+ADMIN_ID = 'Сюда'              #Вставте сюда ваш Айди в телеграме
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
